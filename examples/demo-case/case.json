@@ -1,0 +1,16 @@
+{
+  "case_id": "demo-graphical-abstract-001",
+  "task_instruction": "Compose a four-panel graphical abstract with a clear reading order and short panel messages.",
+  "materials": ["material.md", "retention.csv"],
+  "output_contract": {
+    "editable_source": "layered editable source file",
+    "exports": "exported SVG with element checks",
+    "provenance_and_changes": "element -> source sentence mapping and change record",
+    "case_id": "",
+    "compliance_checks": "",
+    "content_map": "",
+    "exceptions": "",
+    "export_artifact": "",
+    "status": ""
+  }
+}

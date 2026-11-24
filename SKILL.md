@@ -29,7 +29,7 @@ description: Use when a paper's problem, method, key result and implication must
 5. **数据编码**：从表格抽取一条数值系列生成迷你图规格；数字与表格不一致时标出。
 6. **图注与标题**：用一句话概括“做了什么、发现了什么、意味着什么”，不夸大。
 7. **版式约束**：检查画布尺寸、分辨率、最小字号、颜色数、面板字数、阅读顺序、箭头完整性。
-8. **导出计划**：登记格式与检查项，`performed=false`。
+8. **导出与绘图**：实际写出 `figure.svg` 与 `figure-spec.json`；SVG 项 `performed=true`，PNG/PDF 未执行则如实 `false`。
 9. **契约落盘**：保留 `case_id` 与全部 `output_contract` 字段。
 
 ## 评分维度对应
@@ -57,11 +57,11 @@ description: Use when a paper's problem, method, key result and implication must
 | 无实体关系 | 不画箭头 | `flow` 为空，`uncertainty` 说明 |
 | 字数/颜色/字号超限 | 不静默压缩 | `style_violation` 列出项 |
 | 无表格 | 不生成迷你图 | `mini_chart` 为 `null` |
-| 渲染工具缺失 | 只给导出计划 | `export_plan[].performed=false` |
+| PNG/PDF 渲染工具缺失 | 仅栅格/PDF 只给导出计划 | SVG `performed=true`；其余 `export_plan[].performed=false` |
 
 ## 限制
 
-句子分类基于线索词，可能把结果句误判为方法句；图形摘要的视觉隐喻与美学判断不在自动校验范围内。输出是结构规格，不是最终像素。
+句子分类基于线索词，可能把结果句误判为方法句；图形摘要的视觉隐喻与美学判断不在自动校验范围内。`figure.svg` 由实际版式写出，PNG/PDF 预览未渲染。
 
 ## 最小调用示例（示例，非官方案例结果）
 
@@ -70,3 +70,14 @@ python scripts/run_skill.py --case /input/case.json --out /app/output/result.jso
 ```
 
 示例输入（示意）：四段式摘要 + 一张两列小表。示例输出（示意）：`status="success"`，四个 panel 各带 `evidence_sentence`，迷你图来自表 1。仅为示例，不代表官方固定案例结果。
+
+## Quickstart
+
+在包根目录执行：
+
+```bash
+python scripts/run_skill.py --case examples/demo-case/case.json --out ./demo-output/result.json
+```
+
+- 演示案例：`examples/demo-case/case.json`（四段式合成摘要，4 句经线索词分类为 4 个 panel，另含 2 行通量保留率小表；纯合成，不代表真实研究）。
+- 输出：`result.json`、`figure.svg`（单行面板故事板 + 阅读顺序箭头）与 `figure-spec.json`；`panels[].bbox_ratio` 由实际版式反算，五个契约键均为真实内容。

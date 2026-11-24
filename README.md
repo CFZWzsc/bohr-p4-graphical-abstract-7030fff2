@@ -3,7 +3,7 @@
 Bohrium Playground Period 4 submission — challenge `graphical-abstract-7030fff2` (track: `scientific-graphics`).
 
 This repository holds the complete skill package for the challenge: the skill
-definition, its executable entry point and all supporting scripts. No precomputed
+definition, its executable pipeline and all supporting documents. No precomputed
 answers, private data or credentials are included.
 
 ## Skill
@@ -16,20 +16,28 @@ answers, private data or credentials are included.
 | File |
 |------|
 | `SKILL.md` |
+| `examples/demo-case/case.json` |
+| `examples/demo-case/material.md` |
+| `examples/demo-case/retention.csv` |
+| `examples/demo-case/task.md` |
+| `scripts/figure_svg.py` |
 | `scripts/run_skill.py` |
 | `README.md` |
 
 ## How to run
 
 ```bash
-python scripts/run_skill.py --case /input/case.json --output /app/output/result.json
+python scripts/sk_entry.py --input /input --work /app/work --out /app/output
 ```
 
-The entry point is `SKILL.md`; input/output contracts, error handling and a minimal
-usage example are documented there.
+A single deterministic pass reads `/input`, computes the deliverable and writes a
+contract-complete `/app/output/result.json` plus the human-readable review files
+described in `SKILL.md`. The same input always produces byte-identical output; no
+network access is used, and fields the materials cannot support are reported
+explicitly instead of being left empty.
 
 ## Notes
 
 - Pure Python standard library; no network access required.
-- The result JSON keeps the input case id, the main results, per-item evidence,
-  a run status and an uncertainty section.
+- Every claim is anchored to paragraph-level evidence; unknown items are reported
+  in `uncertainty` instead of being fabricated.

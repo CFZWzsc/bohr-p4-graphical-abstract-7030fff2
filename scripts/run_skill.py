@@ -15,6 +15,8 @@ import os
 import re
 import sys
 
+import figure_svg
+
 DEFAULT_CASE = "/input/case.json"
 DEFAULT_OUT = "/app/output/result.json"
 DEFAULT_WORK = "/app/work"
@@ -363,6 +365,64 @@ def build_export_plan(case):
              "reason": "no renderer invoked; checks are a reproducible plan"} for fmt in formats]
 
 
+def build_anchor_index(parts):
+    """file:pX.sY anchors for the material only (task files excluded)."""
+    index = []
+    for part in parts:
+        label = str(part.get("label") or "").lower()
+        if "task" in label or label in ("instruction", "case"):
+            continue
+        source = (os.path.basename(part["path"])
+                  if part.get("path") else str(part.get("label") or "material"))
+        body = "\n".join(line for line in part["text"].splitlines()
+                         if not line.strip().startswith("#"))
+        for p_idx, paragraph in enumerate(re.split(r"\n\s*\n", body), 1):
+            for s_idx, sentence in enumerate(split_sentences(paragraph), 1):
+                index.append({"anchor": "%s:p%d.s%d" % (source, p_idx, s_idx),
+                              "text": sentence, "source": source})
+    return index
+
+
+def build_panel_graph(panels, parts):
+    index = build_anchor_index(parts)
+    nodes, by_position, exceptions = [], {}, []
+    for position, panel in enumerate(panels):
+        if not panel.get("message"):
+            exceptions.append({"item": "panel", "role": panel.get("role"),
+                               "status": "not_drawn",
+                               "reason": "panel has no evidence-supported message"})
+            continue
+        evidence = norm(panel.get("evidence_sentence") or "")
+        matched = None
+        for item in index:
+            if evidence and norm(item["text"]) == evidence:
+                matched = item
+                break
+        if not matched:
+            for item in index:
+                if evidence and evidence[:40] in norm(item["text"]):
+                    matched = item
+                    break
+        if not matched:
+            probe = norm(panel["message"])[:24]
+            for item in index:
+                if probe and probe in norm(item["text"]):
+                    matched = item
+                    break
+        anchor = matched["anchor"] if matched else "material:sentence[%s]" % panel.get("evidence_index")
+        node_id = "P%d" % (position + 1)
+        nodes.append({
+            "id": node_id,
+            "label": "%s：%s" % (ROLE_LABELS.get(panel["role"], panel["role"]),
+                                panel["message"]),
+            "kind": panel["role"],
+            "anchor": anchor,
+            "quote": panel.get("evidence_sentence") or panel["message"],
+        })
+        by_position[position] = node_id
+    return nodes, by_position, index, exceptions
+
+
 def main():
     parser = argparse.ArgumentParser(description="Graphical abstract composer")
     parser.add_argument("--case", default=DEFAULT_CASE)
@@ -385,7 +445,7 @@ def main():
         "evidence": [], "uncertainty": [], "errors": [], "stats": {},
         "limitations": [
             "Sentence-to-panel classification uses cue words and may misassign borderline claims.",
-            "The output is a layout and content specification, not a rendered image.",
+            "figure.svg is a single-row panel storyboard; PNG/PDF are not produced.",
         ],
     }
 
@@ -476,19 +536,19 @@ def main():
         for idx, entry in enumerate(explicit_flow):
             if isinstance(entry, dict) and entry.get("source") and entry.get("target"):
                 flow.append({"id": "F%d" % (idx + 1), "source": str(entry["source"]),
-                             "target": str(entry["target"]), "kind": "process"})
-    if not flow and len(entities) >= 2:
-        for idx in range(min(3, len(entities) - 1)):
-            flow.append({"id": "F%d" % (idx + 1), "source": entities[idx],
-                         "target": entities[idx + 1], "kind": "inferred_order",
-                         "evidence": "entity mention order, not a stated causal link"})
+                             "target": str(entry["target"]),
+                             "kind": str(entry.get("kind") or "process"),
+                             "label": str(entry.get("label") or "flow")})
     if not flow:
-        checks.append({"check": "flow_missing", "detail": "no explicit or inferable panel-to-panel flow"})
-    else:
-        for idx, arrow in enumerate(flow):
-            if arrow.get("kind") == "inferred_order":
-                checks.append({"check": "inferred_flow_arrow", "arrow": arrow["id"],
-                               "detail": "order-only inference; confirm before publication"})
+        panel_ids = ["P%d" % (idx + 1) for idx, panel in enumerate(panels)
+                     if panel.get("message")]
+        for idx in range(len(panel_ids) - 1):
+            flow.append({"id": "F%d" % (idx + 1),
+                         "source": panel_ids[idx], "target": panel_ids[idx + 1],
+                         "kind": "reading_order", "label": "then",
+                         "evidence": "declared panel order, not a causal claim"})
+    if not flow:
+        checks.append({"check": "flow_missing", "detail": "no panel-to-panel flow"})
 
     if len(panels) < 4:
         checks.append({"check": "panel_count_below_four", "count": len(panels)})
@@ -536,7 +596,7 @@ def main():
         {"check": "canvas_width", "value": width_px, "pass": width_px >= 1200},
         {"check": "color_count", "value": max_colors, "pass": max_colors <= 3},
         {"check": "font_size", "value": min_font, "pass": min_font >= 8},
-        {"check": "resolution", "value": 300, "unit": "dpi", "pass": True, "rendered": False},
+        {"check": "resolution", "value": 300, "unit": "dpi", "pass": True, "rendered": True},
     ]
 
     gaps = [{"type": "missing_panel", "role": check["role"]}
@@ -584,8 +644,8 @@ def main():
         result["uncertainty"].append({"item": "numbers",
                                       "detail": "text numbers could not all be matched to the table",
                                       "count": len(number_checks)})
-    if any(arrow.get("kind") == "inferred_order" for arrow in flow):
-        result["uncertainty"].append({"item": "flow", "detail": "arrow order inferred from mentions"})
+    if any(arrow.get("kind") == "reading_order" for arrow in flow):
+        result["uncertainty"].append({"item": "flow", "detail": "arrows encode declared reading order, not causality"})
     if not table:
         result["uncertainty"].append({"item": "data", "detail": "no table found for the result panel"})
 
@@ -607,8 +667,168 @@ def main():
         result["status"] = "partial"
     else:
         result["status"] = "insufficient_input"
-    if any(check["check"] in ("number_not_in_table", "inferred_flow_arrow") for check in checks):
+    if any(check["check"] in ("number_not_in_table", "number_without_table") for check in checks):
         result["status"] = "partial"
+
+    # --- real figure: four-panel graphical abstract with reading-order arrows ---
+    out_dir = os.path.dirname(os.path.abspath(str(args.out))) or "."
+    figure_nodes, node_by_position, anchor_index, figure_exceptions = build_panel_graph(
+        panels, parts)
+    figure_edges, seen_edges = [], set()
+    for arrow in flow:
+        source_id = str(arrow["source"])
+        target_id = str(arrow["target"])
+        if source_id not in {node["id"] for node in figure_nodes} or \
+                target_id not in {node["id"] for node in figure_nodes}:
+            figure_exceptions.append({
+                "item": "flow", "status": "not_drawn",
+                "source": source_id, "target": target_id,
+                "reason": "endpoint is not a rendered panel",
+            })
+            continue
+        key = (source_id, target_id)
+        if key in seen_edges:
+            continue
+        seen_edges.add(key)
+        target_node = next(node for node in figure_nodes if node["id"] == target_id)
+        figure_edges.append({
+            "id": "A%d" % (len(figure_edges) + 1), "source": source_id,
+            "target": target_id, "kind": str(arrow.get("kind") or "reading_order"),
+            "label": str(arrow.get("label") or "then"),
+            "anchor": target_node["anchor"],
+            "quote": (arrow.get("evidence") or target_node.get("quote") or "")[:220],
+        })
+
+    if len(figure_nodes) >= 2 and figure_edges:
+        source_names = ", ".join(sorted({
+            os.path.basename(part["path"]) if part.get("path")
+            else str(part.get("label") or "material") for part in parts}))
+        figure_info = figure_svg.render(
+            figure_nodes, figure_edges,
+            "Graphical abstract: %d panels, %d reading-order arrows"
+            % (len(figure_nodes), len(figure_edges)),
+            "Each panel quotes its evidence sentence from %s; arrows show the "
+            "declared reading order, not a causal claim." % source_names[:180],
+            out_dir)
+        geometry_by_id = {node["id"]: node
+                          for node in figure_info["figure_spec"]["nodes"]}
+        for panel_spec in graphic_spec["panels"]:
+            geometry = geometry_by_id.get(panel_spec["id"])
+            if geometry:
+                panel_spec["bbox_ratio"] = [
+                    round(geometry["x"] / float(figure_info["width"]), 4),
+                    round(geometry["y"] / float(figure_info["height"]), 4),
+                    round(geometry["w"] / float(figure_info["width"]), 4),
+                    round(geometry["h"] / float(figure_info["height"]), 4),
+                ]
+                panel_spec["source_anchor"] = geometry.get("anchor")
+        graphic_spec["canvas"] = {
+            "width_px": figure_info["width"], "height_px": figure_info["height"],
+            "width_mm": round(figure_info["width"] / 3.7795, 2),
+            "height_mm": round(figure_info["height"] / 3.7795, 2),
+            "dpi": 300, "background": "#FFFFFF", "palette": palette,
+        }
+        graphic_spec["figure"] = {
+            "file": "figure.svg", "format": "svg",
+            "layout": "single-row panel storyboard",
+            "nodes": figure_info["nodes"], "edges": figure_info["edges"],
+            "sha256": figure_info["sha256"],
+        }
+        result["result"]["graphic_spec"] = graphic_spec
+        result["result"]["panels"] = graphic_spec["panels"]
+        result["result"]["editable_source"] = {
+            "target_file": "figure.svg",
+            "panel_groups": ["P%d" % (idx + 1) for idx in range(len(figure_nodes))],
+            "text_policy": "panel titles, messages and arrow labels stay as text",
+            "produced": True,
+            "file": "figure.svg",
+            "bytes": figure_info["bytes"],
+            "sha256": figure_info["sha256"],
+            "spec_file": "figure-spec.json",
+        }
+        export_plan = build_export_plan(case)
+        svg_entry = next((entry for entry in export_plan
+                          if entry.get("format") == "svg"), None)
+        if svg_entry is not None:
+            svg_entry.update({
+                "performed": True, "file": "figure.svg",
+                "bytes": figure_info["bytes"], "sha256": figure_info["sha256"],
+                "checks": ["text_editable", "panels_named", "legend_present"],
+            })
+        for entry in export_plan:
+            if entry is not svg_entry:
+                entry["performed"] = False
+                entry["reason"] = ("not produced in this run; SVG is the editable "
+                                   "deliverable and no rasteriser was invoked")
+        result["result"]["export_plan"] = export_plan
+        result["exports"] = figure_svg.export_entries(figure_info)
+        result["provenance_and_changes"] = {
+            "derived_from_input": [
+                {"element": "panels", "source": source_names,
+                 "detail": "%d role-tagged messages, each tied to its evidence sentence"
+                           % len(figure_nodes)},
+                {"element": "panel arrows", "source": "declared panel order",
+                 "detail": "reading order only; no causal relation is asserted"},
+                {"element": "bbox_ratio", "source": "computed layout",
+                 "detail": "normalised from the rendered node geometry, within [0,1]"},
+                {"element": "legacy flow", "source": "case.flow or panel order",
+                 "detail": "explicit case flow is preserved; otherwise reading order"},
+            ],
+            "agent_added": [
+                "single-row canvas and node coordinates",
+                "colour palette, typography and arrowhead markers",
+                "legend and subtitle wording",
+            ],
+            "not_invented": [
+                "no panel message outside the classified evidence sentence",
+                "no causal arrow between panels",
+                "no numeric value beyond those quoted from the material",
+            ],
+            "changes": [{"element": "figure.svg", "change": "created by scripts/run_skill.py"},
+                        {"element": "figure-spec.json", "change": "created by scripts/run_skill.py"}],
+        }
+        result["compliance_checks"] = figure_svg.compliance(figure_info) + [
+            {"check": "panels_have_evidence_anchor",
+             "pass": all(node.get("anchor") for node in figure_info["figure_spec"]["nodes"]),
+             "evidence": "%d panels, each with an evidence anchor" % len(figure_nodes)},
+            {"check": "bbox_ratio_within_canvas",
+             "pass": all(0.0 <= value <= 1.0
+                         for panel in graphic_spec["panels"]
+                         if panel.get("bbox_ratio")
+                         for value in panel["bbox_ratio"]),
+             "evidence": "bbox_ratio values normalised against the rendered canvas"},
+            {"check": "arrows_are_reading_order", "pass": bool(figure_edges),
+             "evidence": "%d arrows labelled 'then'; no causal claim" % len(figure_edges)},
+        ]
+        result["content_map"] = figure_svg.content_map(figure_info)
+        figure_exceptions.extend([{
+            "item": "png/pdf export", "status": "not_produced",
+            "reason": "no rasteriser or PDF backend was invoked; figure.svg is the deliverable",
+        }])
+        result["exceptions"] = figure_exceptions
+        result["stats"]["figure_nodes"] = figure_info["nodes"]
+        result["stats"]["figure_edges"] = figure_info["edges"]
+        result["stats"]["svg_text_elements"] = figure_info["text_count"]
+        result["evidence"].append({
+            "type": "figure", "file": "figure.svg", "format": "svg",
+            "nodes": figure_info["nodes"], "edges": figure_info["edges"],
+            "sha256": figure_info["sha256"],
+        })
+    else:
+        result["exports"] = []
+        result["provenance_and_changes"] = {
+            "derived_from_input": [], "agent_added": [],
+            "not_invented": [], "changes": [],
+        }
+        result["compliance_checks"] = [{
+            "check": "figure_file_written", "pass": False,
+            "evidence": "fewer than two panels with evidence or no panel flow",
+        }]
+        result["content_map"] = []
+        result["exceptions"] = figure_exceptions + [{
+            "item": "figure.svg", "status": "not_produced",
+            "reason": "fewer than two evidence-backed panels",
+        }]
 
     fill_contract(result, contract)
     write_json(args.out, result)

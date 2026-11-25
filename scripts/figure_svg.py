@@ -396,6 +396,7 @@ def render(nodes, edges, title, subtitle, out_dir, mode="columns", lanes=None,
     svg.append('<g id="layer-edges">')
     label_boxes = []
     for edge in typed_edges:
+        edge["svg_id"] = "edge-%s" % edge["id"]
         src = by_id[edge["source"]]
         dst = by_id[edge["target"]]
         color, dash = EDGE_STYLES.get(edge["kind"], DEFAULT_EDGE_STYLE)
@@ -410,9 +411,9 @@ def render(nodes, edges, title, subtitle, out_dir, mode="columns", lanes=None,
             % (attr(edge["id"]), path, color, dash_attr, _marker_id(color),
                attr(edge["kind"]), attr(edge.get("anchor")),
                attr((edge.get("quote") or "")[:180])))
-        lines = wrap(edge["label"], 10, 132, max_lines=2)
-        box_w = max([text_width(line, 10) for line in lines] + [10]) + 8
-        box_h = 13 * len(lines) + 3
+        lines = wrap(edge["label"], 11, 132, max_lines=2)
+        box_w = max([text_width(line, 11) for line in lines] + [11]) + 8
+        box_h = 14 * len(lines) + 3
         for _ in range(14):
             box = (lx - 4, ly - 12, lx - 4 + box_w, ly - 12 + box_h)
             if not any(box[0] < u[2] and u[0] < box[2] and
@@ -427,7 +428,7 @@ def render(nodes, edges, title, subtitle, out_dir, mode="columns", lanes=None,
                 'fill="#FFFFFF" opacity="0.92"/>'
                 % (lx - 4, ty - 10, box_w, ))
             svg.append(
-                '<text x="%.1f" y="%.1f" font-family="%s" font-size="10" '
+                '<text x="%.1f" y="%.1f" font-family="%s" font-size="11" '
                 'fill="%s">%s</text>'
                 % (lx, ty, FONT, color, esc(line)))
     svg.append("</g>")
@@ -435,6 +436,7 @@ def render(nodes, edges, title, subtitle, out_dir, mode="columns", lanes=None,
     # nodes
     svg.append('<g id="layer-nodes">')
     for index, node in enumerate(prepared):
+        node["svg_id"] = "node-%s" % node["id"]
         color = PALETTE[index % len(PALETTE)]
         fill = FILLS[index % len(FILLS)]
         svg.append(
@@ -447,7 +449,7 @@ def render(nodes, edges, title, subtitle, out_dir, mode="columns", lanes=None,
             'fill="%s" stroke="%s" stroke-width="1.6"/>'
             % (node["x"], node["y"], node["w"], node["h"], fill, color))
         svg.append(
-            '<text x="%.1f" y="%.1f" font-family="%s" font-size="10" '
+            '<text x="%.1f" y="%.1f" font-family="%s" font-size="11" '
             'fill="%s">%s</text>'
             % (node["x"] + NODE_PAD, node["y"] + 17, FONT, color,
                esc("%s · %s" % (node["id"], node["kind"]))))
@@ -495,7 +497,7 @@ def render(nodes, edges, title, subtitle, out_dir, mode="columns", lanes=None,
     note_y = legend_y + 60
     if legend_extra:
         svg.append(
-            '<text x="%d" y="%.1f" font-family="%s" font-size="10" '
+            '<text x="%d" y="%.1f" font-family="%s" font-size="11" '
             'fill="#7B8794">%s</text>'
             % (int(MARGIN + 14), note_y, FONT, esc(legend_extra)))
     elif not legend_kinds:
@@ -545,7 +547,8 @@ def render(nodes, edges, title, subtitle, out_dir, mode="columns", lanes=None,
             "bands": bands,
         },
         "nodes": [{
-            "id": node["id"], "label": node["label"], "kind": node["kind"],
+            "id": node["id"], "svg_id": "node-%s" % node["id"],
+            "label": node["label"], "kind": node["kind"],
             "anchor": node.get("anchor"), "quote": node.get("quote"),
             "lane": node.get("lane"), "rank": node["rank"],
             "x": round(node["x"], 1), "y": round(node["y"], 1),
@@ -554,7 +557,8 @@ def render(nodes, edges, title, subtitle, out_dir, mode="columns", lanes=None,
                                     node["w"] - 2 * NODE_PAD)) <= 4,
         } for node in prepared],
         "edges": [{
-            "id": edge["id"], "source": edge["source"], "target": edge["target"],
+            "id": edge["id"], "svg_id": "edge-%s" % edge["id"],
+            "source": edge["source"], "target": edge["target"],
             "kind": edge["kind"], "label": edge["label"],
             "anchor": edge.get("anchor"), "quote": edge.get("quote"),
             "arrowhead": "marker-end",
@@ -785,13 +789,15 @@ def export_entries(info):
 
 def content_map(info):
     return [{
-        "node_id": node["id"],
+        "node_id": node.get("svg_id") or node["id"],
+        "spec_id": node["id"],
         "label": node["label"],
         "kind": node["kind"],
         "anchor": node.get("anchor"),
         "quote": node.get("quote"),
     } for node in info["figure_spec"]["nodes"]] + [{
-        "edge_id": edge["id"],
+        "edge_id": edge.get("svg_id") or edge["id"],
+        "spec_id": edge["id"],
         "label": edge["label"],
         "kind": edge["kind"],
         "anchor": edge.get("anchor"),
@@ -1170,7 +1176,7 @@ def _record(path, fmt, renderer, dpi, notes):
         data = handle.read()
     return {
         "file": os.path.basename(path),
-        "path": path,
+        "path": os.path.basename(path),
         "format": fmt,
         "bytes": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),

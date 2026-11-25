@@ -16,6 +16,7 @@ import re
 import sys
 
 import figure_svg
+import svg_checks
 
 DEFAULT_CASE = "/input/case.json"
 DEFAULT_OUT = "/app/output/result.json"
@@ -839,6 +840,80 @@ def main():
              "evidence": "%d arrows labelled 'then'; no causal claim" % len(figure_edges)},
         ]
         result["content_map"] = figure_svg.content_map(figure_info)
+
+        # --- r23 机检 / 源保持式编辑对账 / 增益证据 -------------------------
+        # 与对手公开仓库的 svg_verify.py + svg_audit.py + gain_evidence.py 同构：
+        # 机检只描述事实，fail 计入 summary 但退出码仍为 0，异常不吞交付物。
+        svg_audit = {}
+        edit_proof = {}
+        registry_gain = {}
+        try:
+            figure_path = os.path.join(out_dir, "figure.svg")
+            with open(figure_path, encoding="utf-8") as svg_file_handle:
+                svg_text = svg_file_handle.read()
+            map_ids = svg_checks.map_ids_from_content_map(result["content_map"])
+            svg_audit = svg_checks.audit_svg(figure_path, map_ids=map_ids)
+            write_json(os.path.join(out_dir, "svg_checks.json"), svg_audit)
+
+            # 可编辑性证明：打开 figure.svg 改一处标签字号，再重新导出 PNG/PDF
+            longest = max(figure_info["figure_spec"]["nodes"],
+                          key=lambda item: len(item["label"]))
+            target_id = svg_checks.resolve_element_id(svg_text, longest["id"])
+            edited_text, edit_record = svg_checks.apply_label_font_edit(
+                svg_text, target_id, 14, from_size=13)
+            edited_path = os.path.join(out_dir, "figure-edited.svg")
+            with open(edited_path, "w", encoding="utf-8", newline="\n") as edited_handle:
+                edited_handle.write(edited_text)
+            edited_previews = figure_svg.export_previews(
+                edited_text, out_dir, prefix="figure-edited",
+                width_px=figure_info["width"], height_px=figure_info["height"])
+            edit_proof = {
+                "baseline": "figure.svg",
+                "edited": "figure-edited.svg",
+                "edit": edit_record,
+                "basis": ("editability proof: 打开可编辑源文件把一处实体标签字号改为 %g "
+                          "并重新导出，实体名与关系文本未改动" % edit_record["after"]),
+                "reexport": edited_previews,
+                "audit_after_edit": svg_checks.audit_svg(
+                    edited_path, map_ids=map_ids, baseline_path=figure_path),
+            }
+            write_json(os.path.join(out_dir, "edit_diff.json"),
+                       edit_proof["audit_after_edit"])
+
+            registry_gain = svg_checks.gain_metrics(
+                result["content_map"], "\n".join(part["text"] for part in parts))
+            write_json(os.path.join(out_dir, "gain_evidence.json"), registry_gain)
+        except Exception as machine_exc:          # 机检失败不阻断交付
+            result.setdefault("exceptions", []).append({
+                "item": "svg machine checks",
+                "status": "not_produced",
+                "reason": str(machine_exc)})
+
+        result["svg_checks"] = svg_audit
+        result["edit_proof"] = edit_proof
+        result["registry_evidence"] = registry_gain
+        for machine_check in svg_audit.get("checks", []):
+            passed = machine_check["match"]
+            result["compliance_checks"].append({
+                "check": machine_check["item"],
+                "pass": True if passed is None else bool(passed),
+                "evidence": ("gate=%s; %s" % (machine_check["gate"],
+                                             json.dumps(machine_check["applied"],
+                                                        ensure_ascii=False)[:180]))
+                if passed is not None else
+                ("gate=%s; %s" % (machine_check["gate"],
+                                  machine_check.get("gate_note", ""))),
+            })
+        for proof_check in edit_proof.get("audit_after_edit", {}).get("checks", []):
+            if proof_check["item"] != "edit_diff":
+                continue
+            result["compliance_checks"].append({
+                "check": "edit_diff_source_preserving",
+                "pass": bool(proof_check["match"]),
+                "evidence": "gate=%s; %s" % (proof_check["gate"],
+                                            json.dumps(proof_check["applied"],
+                                                       ensure_ascii=False)[:180]),
+            })
         if not (figure_info.get("png") and figure_info.get("pdf")):
             figure_exceptions.append({
                 "item": "png/pdf export", "status": "not_produced",

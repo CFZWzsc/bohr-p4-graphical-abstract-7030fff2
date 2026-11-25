@@ -159,7 +159,7 @@ def pick_panels(case, sentences):
         candidates = buckets[role]
         if candidates:
             idx, sentence = candidates[0]
-            panels.append({"role": role, "message": sentence[:220],
+            panels.append({"role": role, "message": clip_sentence(sentence, 78),
                            "visual": {"background": "concept_icon", "method": "workflow",
                                       "result": "mini_chart", "conclusion": "impact_icon"}[role],
                            "evidence_sentence": sentence, "evidence_index": idx,

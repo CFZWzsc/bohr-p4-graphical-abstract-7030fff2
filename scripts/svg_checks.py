@@ -120,6 +120,103 @@ def _check(item, template_value, applied, match, gate="enforced", note=None):
     return rec
 
 
+def add_checks(report, checks):
+    """把额外检查并入既有报告，并同步 summary（fail 只统计 enforced 且 match=False）。"""
+    for rec in checks or []:
+        report.setdefault("checks", []).append(rec)
+        report.setdefault("summary", {}).setdefault("gates", {})[rec["item"]] = rec["gate"]
+        if rec.get("gate") == "enforced" and rec.get("match") is False:
+            report["summary"]["fail"] = report["summary"].get("fail", 0) + 1
+    return report
+
+
+def provenance_check(content_map):
+    """每条映射目都必须带段落锚点与逐字短引（对应 pathway_check 的 source 断言）。"""
+    entries = list(content_map or [])
+    missing = []
+    for entry in entries:
+        eid = (entry.get("node_id") or entry.get("edge_id")
+               or entry.get("element_id") or entry.get("id")) if isinstance(entry, dict) else None
+        if not isinstance(entry, dict):
+            missing.append("non-mapping")
+        elif not str(entry.get("anchor") or "").strip():
+            missing.append(str(eid))
+        elif not str(entry.get("quote") or "").strip():
+            missing.append(str(eid))
+    return _check("provenance_complete", "每条映射目都带段落锚点与逐字短引",
+                  {"entries": len(entries), "missing": missing[:5]},
+                  bool(entries) and not missing)
+
+
+def _group_body(svg_text, element_id):
+    """返回 (<g> 起始标签, 该分组内部文本)；找不到返回 (None, "")。"""
+    marker = '<g id="%s"' % element_id
+    idx = svg_text.find(marker)
+    if idx < 0:
+        return None, ""
+    start_end = svg_text.find(">", idx)
+    if start_end < 0:
+        return None, ""
+    head = svg_text[idx:start_end + 1]
+    depth, pos = 1, start_end + 1
+    while pos < len(svg_text):
+        nxt_open = svg_text.find("<g", pos)
+        nxt_close = svg_text.find("</g>", pos)
+        if nxt_close < 0:
+            break
+        if 0 <= nxt_open < nxt_close:
+            depth += 1
+            pos = nxt_open + 2
+        else:
+            depth -= 1
+            if depth == 0:
+                return head, svg_text[start_end + 1:nxt_close]
+            pos = nxt_close + 4
+    return head, svg_text[start_end + 1:]
+
+
+def numeric_check(svg_text, content_map):
+    """data-value 与图内渲染数字、映射标签数字三方比对（对应 verify_map 的数值对账）。"""
+    checked, mismatches = [], []
+    for entry in content_map or []:
+        if not isinstance(entry, dict):
+            continue
+        eid = (entry.get("node_id") or entry.get("edge_id")
+               or entry.get("element_id") or entry.get("id"))
+        if not eid:
+            continue
+        head, body = _group_body(svg_text, eid)
+        if head is None:
+            continue
+        found = re.search(r'data-value="([^"]+)"', head)
+        if not found:
+            continue
+        declared = found.group(1).strip()
+        try:
+            declared_value = float(declared)
+        except ValueError:
+            continue
+        rendered = [tok for text in re.findall(r">([^<>]+)<", body)
+                    for tok in re.findall(r"-?\d+(?:\.\d+)?", text)]
+        label_nums = re.findall(r"-?\d+(?:\.\d+)?", str(entry.get("label") or ""))
+
+        def near(tokens):
+            return any(abs(float(tok) - declared_value) < 1e-9 for tok in tokens)
+
+        ok = near(rendered) and (not label_nums or near(label_nums))
+        checked.append({"element_id": eid, "data_value": declared,
+                        "rendered": rendered[:4], "label": entry.get("label")})
+        if not ok:
+            mismatches.append(str(eid))
+    if not checked:
+        return _check("numeric_label_match", "每个 data-value 与渲染数字、映射标签一致",
+                      {"suspects": 0}, None, "skipped_not_provided",
+                      "no mapped element carries a data-value attribute")
+    return _check("numeric_label_match", "每个 data-value 与渲染数字、映射标签一致",
+                  {"checked": len(checked), "mismatches": mismatches[:5],
+                   "sample": checked[:3]}, not mismatches)
+
+
 def audit_svg(svg_path, map_ids=None, baseline_path=None, margin=MARGIN):
     """对单份 SVG 做机检；返回可直接内嵌 result.json 的报告。"""
     report = {"svg": os.path.basename(str(svg_path)), "checks": [],

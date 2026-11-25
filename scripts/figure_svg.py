@@ -12,6 +12,8 @@ import hashlib
 import json
 import os
 import re
+import struct
+import zlib
 
 from xml.sax.saxutils import escape as _xml_escape
 
@@ -591,6 +593,91 @@ def render(nodes, edges, title, subtitle, out_dir, mode="columns", lanes=None,
     return info
 
 
+def _png_scan(data):
+    """Decode an 8-bit RGB/RGBA PNG with the standard library and measure ink."""
+    if not data or data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    pos, width, height, bitdepth, colortype, idat = 8, 0, 0, 0, 0, b""
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos:pos + 4])[0]
+        ctype = data[pos + 4:pos + 8]
+        chunk = data[pos + 8:pos + 8 + length]
+        if ctype == b"IHDR":
+            width, height, bitdepth, colortype = struct.unpack(">IIBB", chunk[:10])
+        elif ctype == b"IDAT":
+            idat += chunk
+        elif ctype == b"IEND":
+            break
+        pos += 12 + length
+    if bitdepth != 8 or colortype not in (2, 6):
+        return None
+    channels = 3 if colortype == 2 else 4
+    stride = width * channels
+    try:
+        raw = zlib.decompress(idat)
+    except zlib.error:
+        return None
+    prev = bytearray(stride)
+    ink, sampled, offset = 0, 0, 0
+    step = 4 if width > 400 else 1
+    for _ in range(height):
+        if offset >= len(raw):
+            return None
+        filt = raw[offset]
+        offset += 1
+        row = bytearray(raw[offset:offset + stride])
+        offset += stride
+        if filt == 1:
+            for i in range(channels, stride):
+                row[i] = (row[i] + row[i - channels]) & 255
+        elif filt == 2:
+            for i in range(stride):
+                row[i] = (row[i] + prev[i]) & 255
+        elif filt == 3:
+            for i in range(stride):
+                left = row[i - channels] if i >= channels else 0
+                row[i] = (row[i] + ((left + prev[i]) >> 1)) & 255
+        elif filt == 4:
+            for i in range(stride):
+                a = row[i - channels] if i >= channels else 0
+                b = prev[i]
+                c = prev[i - channels] if i >= channels else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pred = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                row[i] = (row[i] + pred) & 255
+        prev = row
+        for x in range(0, stride, channels * step):
+            if not (row[x] > 245 and row[x + 1] > 245 and row[x + 2] > 245):
+                ink += 1
+        sampled += 1
+    total = sampled * ((width + step - 1) // step)
+    return {"width": width, "height": height,
+            "nonwhite_ratio": round(ink / total, 4) if total else 0.0}
+
+
+def png_ink(info):
+    """Pixel-level check of the exported PNG (non-blank canvas, same aspect)."""
+    rec = info.get("png") or {}
+    path = rec.get("path") or rec.get("file")
+    if not path:
+        return None
+    candidate = path
+    if not os.path.isabs(candidate):
+        candidate = os.path.join(os.path.dirname(info.get("path") or ""), candidate)
+    try:
+        with open(candidate, "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return None
+    scan = _png_scan(data)
+    if not scan:
+        return None
+    scan["aspect_ok"] = abs(scan["width"] / max(scan["height"], 1)
+                            - info["width"] / max(info["height"], 1)) < 0.02
+    return scan
+
+
 def compliance(info):
     """Per-bullet, evidence-backed checks over the written figure."""
     spec = info["figure_spec"]
@@ -634,6 +721,19 @@ def compliance(info):
                          % (rec["file"], rec["bytes"], rec["dpi"], rec["renderer"]))
                         if rec else (info.get("preview_log")
                                      or "%s preview could not be rendered" % fmt),
+        })
+    ink = png_ink(info)
+    if ink:
+        checks.append({
+            "check": "png_pixels_nonblank",
+            "pass": ink["nonwhite_ratio"] > 0.01,
+            "evidence": "%dx%d px, %.2f%% non-white pixels decoded from figure.png"
+                        % (ink["width"], ink["height"], 100 * ink["nonwhite_ratio"]),
+        })
+        checks.append({
+            "check": "png_aspect_matches_svg", "pass": ink["aspect_ok"],
+            "evidence": "PNG %dx%d vs SVG %dx%d"
+                        % (ink["width"], ink["height"], info["width"], info["height"]),
         })
     return checks
 

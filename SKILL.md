@@ -29,7 +29,7 @@ description: Use when a paper's problem, method, key result and implication must
 5. **数据编码**：从表格抽取一条数值系列生成迷你图规格；数字与表格不一致时标出。
 6. **图注与标题**：用一句话概括“做了什么、发现了什么、意味着什么”，不夸大。
 7. **版式约束**：检查画布尺寸、分辨率、最小字号、颜色数、面板字数、阅读顺序、箭头完整性。
-8. **导出与绘图**：实际写出 `figure.svg` 与 `figure-spec.json`；SVG 项 `performed=true`，PNG/PDF 未执行则如实 `false`。
+8. **导出与绘图**：实际写出 `figure.svg`、`figure.png`、`figure.pdf` 与 `figure-spec.json`；逐项记录字节数/SHA-256、渲染器与 dpi。
 9. **契约落盘**：保留 `case_id` 与全部 `output_contract` 字段。
 
 ## 评分维度对应
@@ -57,11 +57,11 @@ description: Use when a paper's problem, method, key result and implication must
 | 无实体关系 | 不画箭头 | `flow` 为空，`uncertainty` 说明 |
 | 字数/颜色/字号超限 | 不静默压缩 | `style_violation` 列出项 |
 | 无表格 | 不生成迷你图 | `mini_chart` 为 `null` |
-| PNG/PDF 渲染工具缺失 | 仅栅格/PDF 只给导出计划 | SVG `performed=true`；其余 `export_plan[].performed=false` |
+| PNG/PDF 渲染工具缺失 | Pillow 缺失时用纯 Python 栅格兜底 | 记录 renderer/dpi；仍失败则 `performed=false` 并写明原因 |
 
 ## 限制
 
-句子分类基于线索词，可能把结果句误判为方法句；图形摘要的视觉隐喻与美学判断不在自动校验范围内。`figure.svg` 由实际版式写出，PNG/PDF 预览未渲染。
+句子分类基于线索词，可能把结果句误判为方法句；图形摘要的视觉隐喻与美学判断不在自动校验范围内。`figure.svg` 由实际版式写出，PNG/PDF 由同一图元树导出。
 
 ## 最小调用示例（示例，非官方案例结果）
 

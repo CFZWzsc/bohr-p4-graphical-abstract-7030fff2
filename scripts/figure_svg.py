@@ -550,6 +550,8 @@ def render(nodes, edges, title, subtitle, out_dir, mode="columns", lanes=None,
             "lane": node.get("lane"), "rank": node["rank"],
             "x": round(node["x"], 1), "y": round(node["y"], 1),
             "w": round(node["w"], 1), "h": round(node["h"], 1),
+            "label_fits": len(wrap(node["label"], 13,
+                                    node["w"] - 2 * NODE_PAD)) <= 4,
         } for node in prepared],
         "edges": [{
             "id": edge["id"], "source": edge["source"], "target": edge["target"],
@@ -701,6 +703,11 @@ def compliance(info):
          "pass": len(labelled_edges) == len(edges),
          "evidence": "%d/%d edges carry a short relation label"
                      % (len(labelled_edges), len(edges))},
+        {"check": "labels_fit_node_width",
+         "pass": all(node.get("label_fits", True) for node in nodes),
+         "evidence": "%d/%d node labels fit their box within 4 wrapped lines"
+                     % (sum(1 for node in nodes if node.get("label_fits", True)),
+                        len(nodes))},
         {"check": "layout_inside_canvas", "pass": containment,
          "evidence": "max node x=%.1f of %d px, max node y=%.1f of %d px"
                      % (info["max_x"], info["width"], info["max_y"], info["height"])},

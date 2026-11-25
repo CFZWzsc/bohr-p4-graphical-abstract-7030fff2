@@ -44,7 +44,7 @@ description: Use when a paper's problem, method, key result and implication must
 
 `/app/output/result.json` 顶层保留 `case_id`、`output_contract` 全部字段、`status`、`result`、`evidence`、`uncertainty`、`errors`、`stats`、`skill`、`challenge_id`、`contract_notes`。未支持字段写 `null` 并记录原因。
 
-主要交付段：`result.graphic_spec.panels`、`result.graphic_spec.flow`、`result.graphic_spec.legend`、`result.style_checks`、`result.caption`。
+主要交付段：`result.graphic_spec.panels`、`result.graphic_spec.flow`、`result.graphic_spec.legend`、`result.style_checks`、`result.caption`；机检产物 `svg_checks.json`、`edit_diff.json`、`gain_evidence.json`、`figure-edited.svg`。
 
 ## 异常处理
 

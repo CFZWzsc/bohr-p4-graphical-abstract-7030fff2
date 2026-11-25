@@ -853,6 +853,10 @@ def main():
                 svg_text = svg_file_handle.read()
             map_ids = svg_checks.map_ids_from_content_map(result["content_map"])
             svg_audit = svg_checks.audit_svg(figure_path, map_ids=map_ids)
+            svg_checks.add_checks(svg_audit, [
+                svg_checks.provenance_check(result["content_map"]),
+                svg_checks.numeric_check(svg_text, result["content_map"]),
+            ])
             write_json(os.path.join(out_dir, "svg_checks.json"), svg_audit)
 
             # 可编辑性证明：打开 figure.svg 改一处标签字号，再重新导出 PNG/PDF

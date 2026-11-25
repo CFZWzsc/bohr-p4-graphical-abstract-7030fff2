@@ -300,6 +300,22 @@ def contract_fields(contract):
     return fields, unsupported
 
 
+def clip_sentence(text, limit=90):
+    """Cut at a clause boundary; never split a Latin word in half."""
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    for mark in ("；", "。", "，", ";", ".", ","):
+        pos = cut.rfind(mark)
+        if pos >= limit // 2:
+            return cut[:pos].rstrip("；;，, ")
+    while cut and re.match(r"[A-Za-z0-9]", cut[-1]) and len(cut) < len(text) \
+            and re.match(r"[A-Za-z0-9]", text[len(cut)]):
+        cut = cut[:-1]
+    return cut.rstrip("；;，, ")
+
+
 ALIASES = {
     "status": "status", "graphic_spec": "graphic_spec", "graphical_abstract": "graphic_spec",
     "panels": "panels", "flow": "flow", "legend": "legend",
@@ -445,7 +461,8 @@ def main():
         "evidence": [], "uncertainty": [], "errors": [], "stats": {},
         "limitations": [
             "Sentence-to-panel classification uses cue words and may misassign borderline claims.",
-            "figure.svg is a single-row panel storyboard; PNG/PDF are not produced.",
+            "figure.svg is the editable master; figure.png and figure.pdf are exported "
+            "from the same primitives at 300 dpi when a font stack is available.",
         ],
     }
 
@@ -563,7 +580,17 @@ def main():
                      if panel.get("message") and panel["role"] in ("method", "result", "conclusion")]
     caption = None
     if caption_parts:
-        caption = "；".join(part[:90].rstrip("。；;.") for part in caption_parts[:3]) + "。"
+        pieces = []
+        for part in caption_parts[:3]:
+            clean = str(part).strip().rstrip("。；;.")
+            if len(clean) > 160:
+                clean = clip_sentence(clean, 160).rstrip("。；;.")
+            if clean:
+                pieces.append(clean)
+        if pieces:
+            caption = "；".join(pieces)
+            if not caption.endswith(("。", "！", "？")):
+                caption += "。"
 
     alt_text = None
     if panels:
@@ -755,11 +782,22 @@ def main():
                 "bytes": figure_info["bytes"], "sha256": figure_info["sha256"],
                 "checks": ["text_editable", "panels_named", "legend_present"],
             })
+        previews = {"png": figure_info.get("png"), "pdf": figure_info.get("pdf")}
         for entry in export_plan:
-            if entry is not svg_entry:
+            if entry is svg_entry:
+                continue
+            preview = previews.get(str(entry.get("format", "")).lower())
+            if preview:
+                entry.update({"performed": True, "file": preview["file"],
+                               "bytes": preview["bytes"],
+                               "sha256": preview["sha256"],
+                               "renderer": preview["renderer"],
+                               "dpi": preview["dpi"]})
+                entry.pop("reason", None)
+            else:
                 entry["performed"] = False
-                entry["reason"] = ("not produced in this run; SVG is the editable "
-                                   "deliverable and no rasteriser was invoked")
+                entry["reason"] = ("not produced in this run: no raster or PDF "
+                                   "backend was available")
         result["result"]["export_plan"] = export_plan
         result["exports"] = figure_svg.export_entries(figure_info)
         result["provenance_and_changes"] = {
@@ -801,10 +839,12 @@ def main():
              "evidence": "%d arrows labelled 'then'; no causal claim" % len(figure_edges)},
         ]
         result["content_map"] = figure_svg.content_map(figure_info)
-        figure_exceptions.extend([{
-            "item": "png/pdf export", "status": "not_produced",
-            "reason": "no rasteriser or PDF backend was invoked; figure.svg is the deliverable",
-        }])
+        if not (figure_info.get("png") and figure_info.get("pdf")):
+            figure_exceptions.append({
+                "item": "png/pdf export", "status": "not_produced",
+                "reason": figure_info.get("preview_log")
+                or "no raster or PDF backend available",
+            })
         result["exceptions"] = figure_exceptions
         result["stats"]["figure_nodes"] = figure_info["nodes"]
         result["stats"]["figure_edges"] = figure_info["edges"]
